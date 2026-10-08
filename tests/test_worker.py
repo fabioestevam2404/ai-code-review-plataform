@@ -1,11 +1,12 @@
 from dataclasses import replace
+import sqlite3
 
 import pytest
 
 from app.config import Settings
 from app.db import Database
 from app.github import GitHubError, PullRequestContext
-from app.models import ReviewJob
+from app.models import Finding, ReviewJob
 from app.worker import ReviewWorker
 
 
@@ -82,6 +83,34 @@ def test_publish_failure_keeps_completed_and_does_not_repost(setup):
     assert job.error.startswith("comment publish failed")
     assert run_once(db, worker, settings) is None
     assert len(worker.github.comments) == 1
+
+
+def test_same_finding_in_two_reviews_does_not_collide(setup):
+    db, worker, settings = setup
+    finding = Finding("quality-abc", "quality", "LOW", 0.9, "t", "a.py", 1, 1, "p", "i", "e", "r")
+    db.create_job(ReviewJob(review_id="rev_2", event_id="d2", repository="acme/demo",
+                            pull_request=2, base_sha="base", head_sha="head"))
+    result = {"risk_level": "LOW"}
+    db.save_result(db.get_job("rev_1"), [finding], result)
+    db.save_result(db.get_job("rev_2"), [finding], result)
+    assert len(db.list_findings("rev_1")) == len(db.list_findings("rev_2")) == 1
+
+
+def test_migrates_legacy_findings_primary_key(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """CREATE TABLE findings (finding_id TEXT PRIMARY KEY, review_id TEXT NOT NULL, payload_json TEXT NOT NULL);
+           INSERT INTO findings VALUES ('f1', 'rev_old', '{"x": 1}');"""
+    )
+    conn.close()
+    db = Database(path)
+    db.init()
+    db.init()  # idempotent
+    with db.connection() as c:
+        pk = [row["name"] for row in c.execute("PRAGMA table_info(findings)") if row["pk"]]
+    assert set(pk) == {"finding_id", "review_id"}
+    assert db.list_findings("rev_old") == [{"x": 1}]
 
 
 def test_requeue_only_terminal_jobs(setup):

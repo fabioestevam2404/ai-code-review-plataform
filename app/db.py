@@ -47,9 +47,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_review_jobs_status
                     ON review_jobs(status, updated_at);
                 CREATE TABLE IF NOT EXISTS findings (
-                    finding_id TEXT PRIMARY KEY,
+                    finding_id TEXT NOT NULL,
                     review_id TEXT NOT NULL REFERENCES review_jobs(review_id),
-                    payload_json TEXT NOT NULL
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (review_id, finding_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_findings_review
                     ON findings(review_id);
@@ -65,6 +66,35 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(review_jobs)")}
             if "next_attempt_at" not in columns:
                 conn.execute("ALTER TABLE review_jobs ADD COLUMN next_attempt_at TEXT")
+            self._migrate_findings_key(conn)
+
+    @staticmethod
+    def _migrate_findings_key(conn: sqlite3.Connection) -> None:
+        """Finding ids are stable per diff, so the key must be (review_id, finding_id), not finding_id alone."""
+        pk = [row["name"] for row in conn.execute("PRAGMA table_info(findings)") if row["pk"]]
+        if pk != ["finding_id"]:
+            return
+        # Standard SQLite table rebuild: foreign keys off while the table is swapped.
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.executescript(
+            """
+            BEGIN;
+            ALTER TABLE findings RENAME TO findings_old;
+            DROP INDEX IF EXISTS idx_findings_review;
+            CREATE TABLE findings (
+                finding_id TEXT NOT NULL,
+                review_id TEXT NOT NULL REFERENCES review_jobs(review_id),
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY (review_id, finding_id)
+            );
+            INSERT INTO findings(finding_id, review_id, payload_json)
+                SELECT finding_id, review_id, payload_json FROM findings_old;
+            DROP TABLE findings_old;
+            CREATE INDEX IF NOT EXISTS idx_findings_review ON findings(review_id);
+            COMMIT;
+            """
+        )
+        conn.execute("PRAGMA foreign_keys=ON")
 
     def create_job(self, job: ReviewJob) -> tuple[ReviewJob, bool]:
         with self.connection() as conn:

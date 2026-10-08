@@ -1,14 +1,15 @@
-from collections import defaultdict
+import hashlib
 import re
 from typing import Iterable
-from uuid import uuid4
 
 from .diff import ChangedLine
-from .models import Finding
+from .models import SEVERITIES, Finding
 
 
 def _id(agent: str, file: str, line: int, title: str) -> str:
-    return f"{agent}-{uuid4().hex[:12]}"
+    """Stable id: the same finding gets the same id across reruns of the same diff."""
+    digest = hashlib.sha256(f"{agent}|{file}|{line}|{title}".encode()).hexdigest()
+    return f"{agent}-{digest[:12]}"
 
 
 class Agent:
@@ -95,4 +96,5 @@ def deduplicate(findings: Iterable[Finding]) -> list[Finding]:
         current = unique.get(key)
         if current is None or finding.confidence > current.confidence:
             unique[key] = finding
-    return sorted(unique.values(), key=lambda f: (f.file, f.start_line, f.severity, f.title))
+    # Most severe first (SEVERITIES is ordered BLOCKER..INFO), so per-category caps keep the worst findings.
+    return sorted(unique.values(), key=lambda f: (SEVERITIES.index(f.severity), f.file, f.start_line, f.title))
