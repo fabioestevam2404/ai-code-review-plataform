@@ -1,5 +1,7 @@
 # AI Code Review Platform
 
+[![CI](https://github.com/fabioestevam2404/ai-code-review-plataform/actions/workflows/ci.yml/badge.svg)](https://github.com/fabioestevam2404/ai-code-review-plataform/actions/workflows/ci.yml)
+
 Plataforma de code review automatizado para Pull Requests do GitHub. Recebe webhooks, analisa o diff com agentes de segurança, performance e qualidade e aplica um quality gate configurável — com fila persistente, retry, trilha de auditoria e modo read-only por padrão. Nunca executa o código analisado.
 
 ```text
