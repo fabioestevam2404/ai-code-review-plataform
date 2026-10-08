@@ -20,8 +20,8 @@ GitHub webhook -> FastAPI -> SQLite -> worker -> analyzers -> quality gate
 
 ## Para que serve
 
-- **Segurança:** detectar cedo padrões perigosos — `shell=True`, credenciais hard-coded, SQL montado por interpolação.
-- **Performance:** apontar chamadas HTTP sem timeout e queries dentro de loops (N+1).
+- **Segurança:** detectar cedo padrões perigosos — `shell=True`, credenciais hard-coded, SQL montado por interpolação, `eval`/`exec`, desserialização com `pickle`, `yaml.load` sem `SafeLoader`, `verify=False` e hashes fracos (MD5/SHA-1).
+- **Performance:** apontar chamadas HTTP sem timeout e queries executadas dentro do corpo de loops (N+1).
 - **Qualidade:** sinalizar TODO/FIXME introduzidos em código de produção.
 - **Padronização:** garantir um critério mínimo e consistente em todos os PRs, independente de quem revisa.
 
