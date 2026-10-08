@@ -36,6 +36,7 @@ def require_admin(request: Request) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings.validate()
     db.init()
     task = asyncio.create_task(worker.run())
     yield

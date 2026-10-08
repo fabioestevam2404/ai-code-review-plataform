@@ -85,6 +85,12 @@ Falha ao publicar o comentário não reprocessa o review: o job permanece `COMPL
 
 Variáveis disponíveis em [.env.example](.env.example).
 
+A aplicação valida a configuração ao iniciar e recusa subir quando:
+
+- `APP_ENV=production` e `GITHUB_WEBHOOK_SECRET` está vazio ou com valor de exemplo (`change-me`);
+- `APP_ENV=production` e `API_ADMIN_TOKEN` não está definido;
+- `GITHUB_WRITE_ENABLED=true` sem `GITHUB_TOKEN` (em qualquer ambiente).
+
 ## Limitações atuais
 
 - Análise por regras (regex) apenas sobre as linhas adicionadas do diff, sem entender o contexto do código.

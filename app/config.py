@@ -6,6 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+PLACEHOLDER_SECRETS = {"change-me", "changeme", "secret"}
+
+
+class ConfigError(RuntimeError):
+    pass
+
 
 def _bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -28,6 +34,19 @@ class Settings:
     worker_retry_base_seconds: float
     max_diff_bytes: int
     max_findings_per_category: int
+
+    def validate(self) -> None:
+        """Refuse to start with settings that would expose the service or fail every publish."""
+        errors: list[str] = []
+        if self.app_env == "production":
+            if not self.github_webhook_secret or self.github_webhook_secret in PLACEHOLDER_SECRETS:
+                errors.append("GITHUB_WEBHOOK_SECRET must be set to a real secret in production")
+            if not self.api_admin_token or self.api_admin_token in PLACEHOLDER_SECRETS:
+                errors.append("API_ADMIN_TOKEN must be set in production")
+        if self.github_write_enabled and not self.github_token:
+            errors.append("GITHUB_WRITE_ENABLED=true requires GITHUB_TOKEN")
+        if errors:
+            raise ConfigError("; ".join(errors))
 
     @classmethod
     def from_env(cls) -> "Settings":
