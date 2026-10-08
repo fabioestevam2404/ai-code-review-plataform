@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 PLACEHOLDER_SECRETS = {"change-me", "changeme", "secret"}
+COMMENT_MODES = {"review", "issue"}
 
 
 class ConfigError(RuntimeError):
@@ -28,6 +29,7 @@ class Settings:
     github_token: str | None
     github_api_url: str
     github_write_enabled: bool
+    github_comment_mode: str
     api_admin_token: str | None
     worker_poll_seconds: float
     worker_max_attempts: int
@@ -45,6 +47,8 @@ class Settings:
                 errors.append("API_ADMIN_TOKEN must be set in production")
         if self.github_write_enabled and not self.github_token:
             errors.append("GITHUB_WRITE_ENABLED=true requires GITHUB_TOKEN")
+        if self.github_comment_mode not in COMMENT_MODES:
+            errors.append(f"GITHUB_COMMENT_MODE must be one of {sorted(COMMENT_MODES)}")
         if errors:
             raise ConfigError("; ".join(errors))
 
@@ -57,6 +61,7 @@ class Settings:
             github_token=os.getenv("GITHUB_TOKEN") or None,
             github_api_url=os.getenv("GITHUB_API_URL", "https://api.github.com").rstrip("/"),
             github_write_enabled=_bool("GITHUB_WRITE_ENABLED"),
+            github_comment_mode=os.getenv("GITHUB_COMMENT_MODE", "review").strip().lower(),
             api_admin_token=os.getenv("API_ADMIN_TOKEN") or None,
             worker_poll_seconds=max(0.2, float(os.getenv("WORKER_POLL_SECONDS", "1"))),
             worker_max_attempts=max(1, int(os.getenv("WORKER_MAX_ATTEMPTS", "3"))),

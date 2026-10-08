@@ -33,5 +33,10 @@ def test_write_enabled_requires_token_in_any_env():
         base(app_env="development", github_write_enabled=True).validate()
 
 
+def test_rejects_unknown_comment_mode():
+    with pytest.raises(ConfigError, match="GITHUB_COMMENT_MODE"):
+        base(github_comment_mode="inline").validate()
+
+
 def test_development_allows_missing_secrets():
     base(app_env="development", github_webhook_secret="", api_admin_token=None).validate()

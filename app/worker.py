@@ -4,8 +4,8 @@ import logging
 
 from .config import Settings
 from .db import Database
-from .github import GitHubClient
-from .review import ReviewEngine, render_comment
+from .github import GitHubClient, GitHubError
+from .review import ReviewEngine, render_comment, render_inline_comments, render_summary
 
 log = logging.getLogger(__name__)
 
@@ -56,8 +56,25 @@ class ReviewWorker:
             # Publishing happens once per analysis; failures are recorded, never retried automatically,
             # because the comment may already exist on GitHub (e.g. response timeout after creation).
             try:
-                self.github.post_issue_comment(job.repository, job.pull_request, render_comment(result))
-                self.db.audit(job.review_id, "COMMENT_PUBLISHED", {"mode": "issue_comment"})
+                mode = self.publish(job, result)
+                self.db.audit(job.review_id, "COMMENT_PUBLISHED", {"mode": mode})
             except Exception as exc:  # noqa: BLE001
                 log.exception("publishing comment for review %s failed", job.review_id)
                 self.db.save_publish_failure(job, str(exc))
+
+    def publish(self, job, result) -> str:
+        if self.settings.github_comment_mode == "review" and result.findings:
+            try:
+                self.github.post_review(
+                    job.repository, job.pull_request, job.head_sha,
+                    render_summary(result), render_inline_comments(result),
+                )
+                return "review"
+            except GitHubError as exc:
+                # 422 means GitHub rejected the payload (e.g. a line outside the diff) and created nothing,
+                # so falling back to a single issue comment cannot duplicate output.
+                if exc.status != 422:
+                    raise
+                self.db.audit(job.review_id, "INLINE_REVIEW_REJECTED", {"error": str(exc)})
+        self.github.post_issue_comment(job.repository, job.pull_request, render_comment(result))
+        return "issue_comment"

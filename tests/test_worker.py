@@ -10,29 +10,52 @@ from app.models import Finding, ReviewJob
 from app.worker import ReviewWorker
 
 
+RISKY_DIFF = """diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1,1 +1,2 @@
++subprocess.run(command, shell=True)
++# TODO remove
+"""
+
+
 class FakeGitHub:
-    def __init__(self, head_sha="head", fail_fetch=False, fail_post=False):
+    def __init__(self, head_sha="head", fail_fetch=False, fail_post=False, diff="", review_error=None):
         self.head_sha = head_sha
         self.fail_fetch = fail_fetch
         self.fail_post = fail_post
+        self.diff = diff
+        self.review_error = review_error
         self.comments: list[str] = []
+        self.reviews: list[dict] = []
 
     def get_pull_request(self, repository, number):
         if self.fail_fetch:
             raise GitHubError("boom")
-        return PullRequestContext(repository, number, "base", self.head_sha, "t", "", "")
+        return PullRequestContext(repository, number, "base", self.head_sha, "t", "", self.diff)
 
     def post_issue_comment(self, repository, number, body):
         self.comments.append(body)
         if self.fail_post:
             raise GitHubError("timeout after create")
 
+    def post_review(self, repository, number, commit_id, body, comments):
+        if self.review_error:
+            raise self.review_error
+        self.reviews.append({"commit_id": commit_id, "body": body, "comments": comments})
+
+
+def audit_events(db, review_id):
+    with db.connection() as conn:
+        rows = conn.execute("SELECT event_type, payload_json FROM audit_events WHERE review_id=? ORDER BY id", (review_id,))
+        return [(row["event_type"], row["payload_json"]) for row in rows]
+
 
 @pytest.fixture
 def setup(tmp_path):
     settings = replace(
         Settings.from_env(), database_path=tmp_path / "db.sqlite3", github_write_enabled=True,
-        worker_max_attempts=3, worker_retry_base_seconds=60,
+        worker_max_attempts=3, worker_retry_base_seconds=60, github_comment_mode="review",
     )
     db = Database(settings.database_path)
     db.init()
@@ -83,6 +106,48 @@ def test_publish_failure_keeps_completed_and_does_not_repost(setup):
     assert job.error.startswith("comment publish failed")
     assert run_once(db, worker, settings) is None
     assert len(worker.github.comments) == 1
+
+
+def test_review_mode_posts_inline_comments_on_head_commit(setup):
+    db, worker, settings = setup
+    worker.github = FakeGitHub(diff=RISKY_DIFF)
+    run_once(db, worker, settings)
+    assert worker.github.comments == []
+    [review] = worker.github.reviews
+    assert review["commit_id"] == "head"
+    assert "REQUEST_CHANGES" in review["body"]
+    assert [(c["path"], c["line"], c["side"]) for c in review["comments"]] == [("app.py", 1, "RIGHT"), ("app.py", 2, "RIGHT")]
+    assert "[HIGH] Command execution with shell=True" in review["comments"][0]["body"]
+    assert ("COMMENT_PUBLISHED", '{"mode": "review"}') in audit_events(db, "rev_1")
+
+
+def test_review_rejected_with_422_falls_back_to_issue_comment(setup):
+    db, worker, settings = setup
+    worker.github = FakeGitHub(diff=RISKY_DIFF, review_error=GitHubError("Unprocessable", 422))
+    run_once(db, worker, settings)
+    assert len(worker.github.comments) == 1
+    events = [e for e, _ in audit_events(db, "rev_1")]
+    assert "INLINE_REVIEW_REJECTED" in events
+    assert ("COMMENT_PUBLISHED", '{"mode": "issue_comment"}') in audit_events(db, "rev_1")
+    assert db.get_job("rev_1").error is None
+
+
+def test_review_server_error_does_not_fall_back(setup):
+    db, worker, settings = setup
+    # A 5xx may have created the review anyway, so a fallback could duplicate output.
+    worker.github = FakeGitHub(diff=RISKY_DIFF, review_error=GitHubError("Bad gateway", 502))
+    run_once(db, worker, settings)
+    assert worker.github.comments == []
+    job = db.get_job("rev_1")
+    assert job.status == "COMPLETED" and job.error.startswith("comment publish failed")
+
+
+def test_issue_mode_posts_single_comment(setup):
+    db, worker, settings = setup
+    worker.settings = replace(settings, github_comment_mode="issue")
+    worker.github = FakeGitHub(diff=RISKY_DIFF)
+    run_once(db, worker, settings)
+    assert worker.github.reviews == [] and len(worker.github.comments) == 1
 
 
 def test_same_finding_in_two_reviews_does_not_collide(setup):

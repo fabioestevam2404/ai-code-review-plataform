@@ -82,3 +82,37 @@ def render_comment(result: ReviewResult) -> str:
             ])
     lines.extend(["", "### Limitações", *[f"- {item}" for item in result.limitations]])
     return "\n".join(lines)
+
+
+def render_summary(result: ReviewResult) -> str:
+    """Review body for inline mode: verdict and counts; details live in the inline comments."""
+    lines = ["## AI Code Review", "", f"**Veredito:** `{result.verdict}`  ", f"**Risco:** `{result.risk_level}`", ""]
+    if not result.findings:
+        lines.append("Não foram identificados problemas relevantes no escopo analisado.")
+    else:
+        counts: dict[str, int] = {}
+        for f in result.findings:
+            counts[f.severity] = counts.get(f.severity, 0) + 1
+        summary = ", ".join(f"{n} {sev}" for sev, n in counts.items())
+        lines.append(f"{len(result.findings)} achado(s) comentados nas linhas do diff: {summary}.")
+    lines.extend(["", "### Limitações", *[f"- {item}" for item in result.limitations]])
+    return "\n".join(lines)
+
+
+def render_inline_comments(result: ReviewResult) -> list[dict]:
+    """One GitHub review comment per finding, anchored to the added line (RIGHT side of the diff)."""
+    return [
+        {
+            "path": f.file,
+            "line": f.start_line,
+            "side": "RIGHT",
+            "body": "\n".join([
+                f"**[{f.severity}] {f.title}** (confiança `{f.confidence:.2f}`)",
+                "",
+                f"- Problema: {f.problem}",
+                f"- Impacto: {f.impact}",
+                f"- Recomendação: {f.recommendation}",
+            ]),
+        }
+        for f in result.findings
+    ]

@@ -5,7 +5,9 @@ from urllib.request import Request, urlopen
 
 
 class GitHubError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -33,7 +35,9 @@ class GitHubClient:
         try:
             with urlopen(request, timeout=30) as response:
                 return response.status, response.read()
-        except (HTTPError, URLError) as exc:
+        except HTTPError as exc:
+            raise GitHubError(str(exc), exc.code) from exc
+        except URLError as exc:
             raise GitHubError(str(exc)) from exc
 
     def get_pull_request(self, repository: str, number: int) -> PullRequestContext:
@@ -57,25 +61,32 @@ class GitHubClient:
             diff=diff_raw.decode("utf-8", errors="replace"),
         )
 
-    def post_issue_comment(self, repository: str, number: int, body: str) -> None:
+    def _post(self, path: str, payload: dict) -> None:
         if not self.token:
             raise GitHubError("GITHUB_TOKEN is required for publishing")
-        payload = json.dumps({"body": body}).encode()
         headers = {
             "Accept": "application/vnd.github+json",
             "Content-Type": "application/json",
             "User-Agent": "ai-code-review-platform/0.1",
             "Authorization": f"Bearer {self.token}",
         }
-        request = Request(
-            self.api_url + f"/repos/{repository}/issues/{number}/comments",
-            data=payload,
-            headers=headers,
-            method="POST",
-        )
+        request = Request(self.api_url + path, data=json.dumps(payload).encode(), headers=headers, method="POST")
         try:
             with urlopen(request, timeout=30) as response:
                 if response.status not in {200, 201}:
-                    raise GitHubError(f"comment request returned {response.status}")
-        except (HTTPError, URLError) as exc:
+                    raise GitHubError(f"POST {path} returned {response.status}", response.status)
+        except HTTPError as exc:
+            raise GitHubError(str(exc), exc.code) from exc
+        except URLError as exc:
             raise GitHubError(str(exc)) from exc
+
+    def post_issue_comment(self, repository: str, number: int, body: str) -> None:
+        self._post(f"/repos/{repository}/issues/{number}/comments", {"body": body})
+
+    def post_review(self, repository: str, number: int, commit_id: str, body: str, comments: list[dict]) -> None:
+        """Create a PR review with inline comments anchored to lines of the diff (event COMMENT)."""
+        # COMMENT, not REQUEST_CHANGES: GitHub rejects REQUEST_CHANGES on the token owner's own PR,
+        # and the verdict is already stated in the review body.
+        self._post(f"/repos/{repository}/pulls/{number}/reviews", {
+            "commit_id": commit_id, "body": body, "event": "COMMENT", "comments": comments,
+        })

@@ -51,7 +51,8 @@ GitHub webhook -> FastAPI -> SQLite -> worker -> analyzers -> quality gate
 - coleta do diff pela API do GitHub;
 - agentes determinísticos de segurança, performance e qualidade;
 - confiança numérica, severidade única e quality gate configurável;
-- publicação de comentário somente quando `GITHUB_WRITE_ENABLED=true`;
+- publicação somente quando `GITHUB_WRITE_ENABLED=true`, como review com comentários por linha no diff
+  (`GITHUB_COMMENT_MODE=review`, padrão) ou comentário único (`issue`);
 - execução sem LLM, shell arbitrário ou execução do código analisado.
 
 ## Execução local
@@ -74,6 +75,8 @@ Endpoints principais (quando `API_ADMIN_TOKEN` estiver definido, envie `X-API-Ke
 - `GET /reviews/{review_id}/findings`
 - `POST /reviews/{review_id}/rerun` — recoloca na fila um review terminal (mesmo `review_id`); retorna 409 se ainda estiver em fila/análise
 
+No modo `review`, cada achado vira um comentário na linha correspondente do diff, ancorado ao `head_sha` analisado, e o corpo do review traz o veredito e a contagem por severidade. O review é publicado com o evento `COMMENT` (o GitHub não permite `REQUEST_CHANGES` no próprio PR do dono do token); o veredito aparece no texto. Se o GitHub rejeitar o review com 422, a plataforma publica um comentário único no lugar (evento `INLINE_REVIEW_REJECTED` na auditoria). Outros erros não fazem fallback, para não duplicar a publicação.
+
 Falha ao publicar o comentário não reprocessa o review: o job permanece `COMPLETED`, o erro fica em `error` e um evento `COMMENT_FAILED` é auditado. Para republicar, use o rerun.
 
 ## Configuração no GitHub
@@ -94,4 +97,4 @@ A aplicação valida a configuração ao iniciar e recusa subir quando:
 ## Limitações atuais
 
 - Análise por regras (regex) apenas sobre as linhas adicionadas do diff, sem entender o contexto do código.
-- Ainda não há LLM, RAG, SAST externo, execução de testes do PR, patches, merge nem comentários por linha. Esses pontos devem ser adicionados atrás de adaptadores isolados, com sandbox e política de permissões.
+- Ainda não há LLM, RAG, SAST externo, execução de testes do PR, patches ou merge. Esses pontos devem ser adicionados atrás de adaptadores isolados, com sandbox e política de permissões.
